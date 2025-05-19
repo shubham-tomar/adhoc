@@ -1,0 +1,124 @@
+
+# rust-kafka-to-doris
+rust-kafka-to-doris/target/
+
+# go modules
+go.sum
+go.mod
+
+# go-schema-migration
+go-schema-migration/schema_migration/sql_output/
+go-schema-migration/.DS_Store
+go-schema-migration/schema_migration/.DS_Store
+
+# go-batch-insert
+go-batch-insert/failed_queries.log
+
+# docker
+docker-compose.yml
+docker-compose.yaml
+
+# postgres
+postgresql.conf
+pg_hba.conf
+
+# flink
+log4j2.xml
+
+.vscode
+
+# prometheus
+prometheus.yml
+
+# grafana
+grafana.ini
+
+# jenkins
+Jenkinsfile
+
+# git
+.gitmodules
+
+# other
+README.md
+LICENSE
+
+# go-schema-migration
+go-schema-migration/go.sum
+go-schema-migration/go.mod
+go-schema-migration/go-schema-migration
+
+# vacuum-manager
+vacuum-manager/go.sum
+vacuum-manager/go.mod
+vacuum-manager/vacuum-manager
+
+# flink-postgres-migration
+flink-postgres-migration/src/main/resources/log4j2.xml
+flink-postgres-migration/src/main/resources/log4j2.xml
+
+# docker-compose
+docker-compose.yml
+docker-compose.yaml
+
+# docker
+Dockerfile
+
+# postgres
+postgresql.conf
+pg_hba.conf
+
+# flink
+log4j2.xml
+
+# prometheus
+prometheus.yml
+
+# grafana
+grafana.ini
+
+# jenkins
+Jenkinsfile
+
+.gitmodules
+
+# other
+README.md
+LICENSE
+
+# go-schema-migration
+go-schema-migration/go.sum
+go-schema-migration/go.mod
+go-schema-migration/go-schema-migration
+
+# vacuum-manager
+vacuum-manager/go.sum
+vacuum-manager/go.mod
+vacuum-manager/vacuum-manager
+
+# flink-postgres-migration
+flink-postgres-migration/src/main/resources/log4j2.xml
+flink-postgres-migration/src/main/resources/log4j2.xml
+
+# docker-compose
+docker-compose.yml
+docker-compose.yaml
+
+# docker
+Dockerfile
+
+# postgres
+postgresql.conf
+pg_hba.conf
+
+# flink
+log4j2.xml
+
+# prometheus
+prometheus.yml
+
+# grafana
+grafana.ini
+
+# jenkins
+Jenkinsfile
