@@ -371,7 +371,7 @@ pub async fn create_batch(
             let is_in_mem = in_mem;
             
             // Commit the message before spawning the task
-            // consumer.commit_message(&msg, CommitMode::Async)?;
+            consumer.commit_message(&msg, CommitMode::Async)?;
             
             // Spawn a task for processing this batch
             let handle = tokio::spawn(async move {
