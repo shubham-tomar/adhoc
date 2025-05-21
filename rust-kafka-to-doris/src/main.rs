@@ -8,6 +8,10 @@ use utils::cli::{Args, parse_topics};
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize the logger
+    if std::env::var("RUST_LOG").is_err() {
+        // If RUST_LOG is not set, default to INFO level
+        std::env::set_var("RUST_LOG", "debug");
+    }
     env_logger::init();
     
     // Parse command-line arguments
@@ -42,19 +46,6 @@ async fn main() -> Result<()> {
         }
     };
     
-    // Start consuming messages
-    // Get output path as a borrowed str if available
-    // let output_path = args.output_path.as_deref(); // Unused for now
-    
-    // Use BE node if provided, otherwise use the regular doris_host
-    let doris_endpoint = if let Some(be_node) = &args.doris_be_node {
-        info!("Using Doris BE node: {}", be_node);
-        format!("http://{}", be_node)
-    } else {
-        info!("Using Doris FE node: {}", args.doris_host);
-        args.doris_host.clone()
-    };
-    
     // Start batch creation process
     utils::kafka::create_batch(
         &consumer, 
@@ -62,7 +53,7 @@ async fn main() -> Result<()> {
         args.flush_interval, 
         args.in_mem, 
         args.output_path.as_deref(),
-        &doris_endpoint,
+        &args.doris_host,
         &args.doris_db,
         &args.doris_table,
         &args.doris_user,

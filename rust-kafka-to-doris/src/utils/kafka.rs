@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use futures::{StreamExt, FutureExt, future::join_all};
+use futures::StreamExt;
 use log::{info, warn, error};
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Pool};
@@ -10,7 +10,6 @@ use rdkafka::error::KafkaResult;
 use rdkafka::message::Message;
 use rdkafka::topic_partition_list::TopicPartitionList;
 use serde_json;
-use tokio::sync::Semaphore;
 use uuid::Uuid;
 use std::time::{Duration, Instant};
 use std::fs;
@@ -152,12 +151,17 @@ pub async fn insert_file_to_doris(
 
     // Check file size
     let file_size = file_contents.len();
-    println!("📦 File to be loaded: {}, size: {} bytes", file_path, file_size);
+    info!("📦 File to be loaded: {}, size: {} bytes", file_path, file_size);
     
-    let doris_host = doris_host.trim_end_matches('/');
+    // Normalize the Doris host URL - ensure it has the proper format with http:// prefix
+    let doris_host = if !doris_host.starts_with("http://") && !doris_host.starts_with("https://") {
+        format!("http://{}", doris_host.trim_end_matches('/'))
+    } else {
+        doris_host.trim_end_matches('/').to_string()
+    };
     
     let url = format!("{}/api/{}/{}/_stream_load", doris_host, db, table);
-    println!("🌐 Sending Stream Load to: {}", url);
+    info!("🌐 Sending Stream Load to: {}", url);
 
     // Build HTTP client
     let client = Client::builder()
@@ -205,7 +209,7 @@ pub async fn insert_file_to_doris(
     if !status.is_success() || body.to_lowercase().contains("fail") || body.to_lowercase().contains("error") {
         Err(anyhow!("❌ Doris Stream Load failed ({}): {}", status, body))
     } else {
-        println!("✅ Stream Load succeeded with label `{}`: {}", label, body);
+        info!("✅ Stream Load succeeded with label `{}`: {}", label, body);
         Ok(())
     }
 }
@@ -219,7 +223,7 @@ async fn process_in_memory(
     password: &str,
     timeout_secs: u64
 ) -> anyhow::Result<()> {
-    println!("Processing {} records in memory", batch.len());
+    info!("Processing {} records in memory", batch.len());
     
     // Create JSON array payload from batch items
     let mut json_payload = String::with_capacity(batch.len() * 200); // Rough estimate for size
@@ -238,14 +242,18 @@ async fn process_in_memory(
     // Convert to bytes for sending
     let payload_bytes = json_payload.into_bytes();
     let payload_size = payload_bytes.len();
-    println!("📦 In-memory payload size: {} bytes", payload_size);
+    info!("📦 In-memory payload size: {} bytes", payload_size);
     
     // Send data directly to Doris using Stream Load API
-    // Normalize the Doris host URL - ensure it doesn't end with a slash
-    let doris_host = doris_host.trim_end_matches('/');
+    // Normalize the Doris host URL - ensure it has the proper format with http:// prefix
+    let doris_host = if !doris_host.starts_with("http://") && !doris_host.starts_with("https://") {
+        format!("http://{}", doris_host.trim_end_matches('/'))
+    } else {
+        doris_host.trim_end_matches('/').to_string()
+    };
     
     let url = format!("{}/api/{}/{}/_stream_load", doris_host, db, table);
-    println!("🌐 Sending Stream Load to: {}", url);
+    info!("🌐 Sending Stream Load to: {}", url);
 
     // Build HTTP client
     let client = Client::builder()
@@ -294,7 +302,7 @@ async fn process_in_memory(
     if !status.is_success() || body.to_lowercase().contains("fail") || body.to_lowercase().contains("error") {
         Err(anyhow!("❌ In-memory Stream Load failed ({}): {}", status, body))
     } else {
-        println!("✅ In-memory Stream Load succeeded with label `{}`: {}", label, body);
+        info!("✅ In-memory Stream Load succeeded with label `{}`: {}", label, body);
         Ok(())
     }
 }
@@ -311,43 +319,23 @@ pub async fn create_batch(
     doris_user: &str,
     doris_password: &str,
     connect_timeout: u64,
-    concurrency: usize,
+    _concurrency: usize, // Keeping parameter but not using it 
     use_mysql: bool,
     mysql_port: u16
 ) -> Result<()> {
-    info!("Starting batch processing with concurrency level: {}", concurrency);
     
-    // Create a semaphore to limit concurrent tasks
-    let semaphore = std::sync::Arc::new(Semaphore::new(concurrency));
     let mut batch: Vec<String> = Vec::with_capacity(batch_size);
     let mut last_flush = Instant::now();
     let mut stream = consumer.stream();
     
-    // Track in-flight tasks for handling errors
-    let mut in_flight_tasks: Vec<tokio::task::JoinHandle<Result<()>>> = Vec::new();
+    let mut success_count = 0;
+    let mut error_count = 0;
 
     while let Some(msg_result) = stream.next().await {
-        // First, check completed tasks to handle any errors
-        let mut i = 0;
-        while i < in_flight_tasks.len() {
-            if in_flight_tasks[i].is_finished() {
-                let task = in_flight_tasks.swap_remove(i);
-                // We just want to check if there were errors, but don't wait
-                if let Some(task_result) = task.now_or_never() {
-                    if let Err(e) = task_result {
-                        error!("Task completed with error: {}", e);
-                        // Continue processing other tasks, don't fail the entire operation
-                    }
-                }
-            } else {
-                i += 1;
-            }
-        }
-        
         let msg = match msg_result {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("Kafka error: {}", e);
+                error!("Kafka error: {}", e);
                 continue;
             }
         };
@@ -359,96 +347,76 @@ pub async fn create_batch(
         let should_flush = batch.len() >= batch_size || last_flush.elapsed() >= Duration::from_secs(flush_interval_secs);
 
         if should_flush && !batch.is_empty() {
-            // Create clones of all parameters needed for parallel processing
             let batch_to_process = batch.clone();
-            let doris_host = doris_host.to_string();
-            let doris_db = doris_db.to_string();
-            let doris_table = doris_table.to_string();
-            let doris_user = doris_user.to_string();
-            let doris_password = doris_password.to_string();
-            let output_path_owned = output_path.map(|s| s.to_string());
-            let semaphore_clone = semaphore.clone();
-            let is_in_mem = in_mem;
+            let batch_size = batch_to_process.len();
+            info!("Processing batch of {} messages", batch_size);
             
-            // Commit the message before spawning the task
-            consumer.commit_message(&msg, CommitMode::Async)?;
-            
-            // Spawn a task for processing this batch
-            let handle = tokio::spawn(async move {
-                // Acquire semaphore permit to limit concurrency
-                let _permit = semaphore_clone.acquire().await.expect("Failed to acquire semaphore");
+            // Process based on protocol and mode flags
+            let result = if use_mysql {
+                // Extract hostname without http:// protocol prefix for MySQL
+                let host_parts: Vec<&str> = doris_host.split("://").collect();
+                let clean_host = if host_parts.len() > 1 { host_parts[1] } else { host_parts[0] };
                 
-                let batch_size = batch_to_process.len();
-                info!("Processing batch of {} messages", batch_size);
+                info!("Using MySQL protocol to insert data");
+                process_via_mysql(
+                    &batch_to_process,
+                    clean_host,
+                    mysql_port,
+                    doris_db,
+                    doris_table,
+                    doris_user,
+                    doris_password,
+                    connect_timeout
+                ).await
+            } else if in_mem {
+                info!("Using Stream Load HTTP protocol in memory");
+                process_in_memory(
+                    &batch_to_process,
+                    doris_host,
+                    doris_db,
+                    doris_table,
+                    doris_user,
+                    doris_password,
+                    connect_timeout
+                ).await
+            } else {
+                // Write batch to file
+                let file_id = Uuid::new_v4().to_string();
+                let dir_path = match output_path {
+                    Some(path) => path.to_string(),
+                    None => std::env::temp_dir().display().to_string(),
+                };
+                let file_path = format!("{}/kafka_batch_{}.json", dir_path, file_id);
                 
-                // Process based on protocol and mode flags
-                let result = if use_mysql {
-                    // Extract hostname without http:// protocol prefix for MySQL
-                    let host_parts: Vec<&str> = doris_host.split("://").collect();
-                    let clean_host = if host_parts.len() > 1 { host_parts[1] } else { host_parts[0] };
-                    
-                    info!("Using MySQL protocol to insert data");
-                    process_via_mysql(
-                        &batch_to_process,
-                        clean_host,
-                        mysql_port,
-                        &doris_db,
-                        &doris_table,
-                        &doris_user,
-                        &doris_password,
-                        connect_timeout
-                    ).await
-                } else if is_in_mem {
-                    info!("Using Stream Load HTTP protocol in memory");
-                    process_in_memory(
-                        &batch_to_process,
-                        &doris_host,
-                        &doris_db,
-                        &doris_table,
-                        &doris_user,
-                        &doris_password,
-                        connect_timeout
-                    ).await
-                } else {
-                    // Write batch to file
-                    let file_id = Uuid::new_v4().to_string();
-                    let dir_path = match output_path_owned {
-                        Some(path) => path,
-                        None => std::env::temp_dir().display().to_string(),
-                    };
-                    let file_path = format!("{}/kafka_batch_{}.json", dir_path, file_id);
-                    
-                    match File::create(&file_path).await {
-                        Ok(mut file) => {
-                            // Write each JSON object with proper formatting
-                            if let Err(e) = file.write(b"[").await {
-                                return Err(anyhow::anyhow!("Failed to write to file: {}", e));
-                            }
-                            
+                match File::create(&file_path).await {
+                    Ok(mut file) => {
+                        // Write each JSON object with proper formatting
+                        if let Err(e) = file.write(b"[").await {
+                            Err(anyhow!("Failed to write to file: {}", e))
+                        } else {
+                            // Write each record
                             for (i, record) in batch_to_process.iter().enumerate() {
-                                // Write the JSON object
-                                if i > 0 {
-                                    if let Err(e) = file.write(b",\n").await {
-                                        return Err(anyhow::anyhow!("Failed to write to file: {}", e));
-                                    }
+                                if i > 0 && file.write(b",\n").await.is_err() {
+                                    return Err(anyhow!("Failed to write delimiter to file"));
                                 }
-                                if let Err(e) = file.write(record.as_bytes()).await {
-                                    return Err(anyhow::anyhow!("Failed to write to file: {}", e));
+                                if file.write(record.as_bytes()).await.is_err() {
+                                    return Err(anyhow!("Failed to write record to file"));
                                 }
                             }
                             
-                            if let Err(e) = file.write(b"]").await {
-                                return Err(anyhow::anyhow!("Failed to write to file: {}", e));
+                            // Close JSON array
+                            if file.write(b"]").await.is_err() {
+                                return Err(anyhow!("Failed to write closing bracket to file"));
                             }
                             
                             // Process the file
                             let load_result = insert_file_to_doris(
                                 &file_path,
-                                &doris_host,
-                                &doris_db,
-                                &doris_table,
-                                &doris_user,
-                                &doris_password,
+                                doris_host,
+                                doris_db,
+                                doris_table,
+                                doris_user,
+                                doris_password,
                                 connect_timeout
                             ).await;
                             
@@ -456,25 +424,26 @@ pub async fn create_batch(
                             let _ = fs::remove_file(&file_path);
                             
                             load_result
-                        },
-                        Err(e) => Err(anyhow::anyhow!("Failed to create file: {}", e)),
-                    }
-                };
-                
-                // Log result and return
-                match &result {
-                    Ok(_) => {
-                        // consumer.commit_message(&msg, CommitMode::Async)?;
-                        info!("✅ Batch of {} messages processed successfully", batch_size);
+                        }
                     },
-                    Err(e) => error!("❌ Failed to process batch: {}", e),
+                    Err(e) => Err(anyhow!("Failed to create file: {}", e)),
                 }
-                
-                result
-            });
+            };
             
-            // Add the task to our in-flight list
-            in_flight_tasks.push(handle);
+            // Process result
+            match result {
+                Ok(_) => {
+                    success_count += 1;
+                    info!("✅ Batch of {} messages processed successfully", batch_size);
+                    // Commit message after successful processing
+                    consumer.commit_message(&msg, CommitMode::Async)?;
+                },
+                Err(e) => {
+                    error_count += 1;
+                    error!("❌ Failed to process batch: {}", e);
+                    // We don't commit on failure so messages can be reprocessed
+                }
+            }
             
             // Clear the batch and reset the timer
             batch.clear();
@@ -482,35 +451,15 @@ pub async fn create_batch(
         }
     }
     
-    // Wait for all in-flight tasks to complete
-    info!("Waiting for {} in-flight tasks to complete", in_flight_tasks.len());
-    let results = join_all(in_flight_tasks).await;
-    
-    // Check for errors but don't fail if some tasks failed
-    let mut error_count = 0;
-    let results_len = results.len(); // Store the length before consuming the vector
-    
-    for result in results {
-        match result {
-            Ok(Ok(_)) => {}, // Task succeeded
-            Ok(Err(e)) => {
-                error_count += 1;
-                error!("Task completed with error: {}", e);
-            },
-            Err(e) => {
-                error_count += 1;
-                error!("Task panicked: {}", e);
-            }
-        }
-    }
-    
+    // Log overall statistics
     if error_count > 0 {
-        warn!("{} out of {} tasks completed with errors", error_count, results_len);
+        warn!("Completed with {} successful batches and {} failed batches", success_count, error_count);
+    } else if success_count > 0 {
+        info!("All {} batches completed successfully", success_count);
     } else {
-        info!("All {} tasks completed successfully", results_len);
+        info!("No batches were processed");
     }
     
-    // We don't fail the overall operation even if some tasks failed
     Ok(())
 }
 
@@ -534,6 +483,8 @@ pub async fn process_via_mysql(
     info!("Connecting to Doris via MySQL protocol: {}:{}/{}", host, port, database);
 
     // Build the MySQL connection URL with all necessary parameters
+    // let url = format!("mysql://{}:{}@{}:{}/{}", 
+    //     username, password, "k8s-devstage-devstage-3ffb228664-a66aa19a393a375a.elb.us-east-1.amazonaws.com", 8030, database);
     let url = format!("mysql://{}:{}@{}:{}/{}", 
         username, password, host, port, database);
 
@@ -596,7 +547,7 @@ pub async fn process_via_mysql(
                     match conn.query_drop(&insert_sql) {
                         Ok(_) => {
                             success_count += 1;
-                            if i % 100 == 0 { // Log progress every 100 records
+                            if i % 10000 == 0 { // Log progress every 10000 records
                                 info!("Inserted record {} via MySQL", i);
                             }
                         },
