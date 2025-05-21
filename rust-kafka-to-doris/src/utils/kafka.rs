@@ -547,7 +547,7 @@ pub async fn process_via_mysql(
                     match conn.query_drop(&insert_sql) {
                         Ok(_) => {
                             success_count += 1;
-                            if i % 10000 == 0 { // Log progress every 10000 records
+                            if i % 100 == 0 { // Log progress every 100 records
                                 info!("Inserted record {} via MySQL", i);
                             }
                         },
