@@ -214,87 +214,85 @@ pub async fn insert_file_to_doris(
     }
 }
 
-async fn process_in_memory(
+pub async fn process_in_memory(
     batch: &[String],
     doris_host: &str,
     db: &str,
     table: &str,
     user: &str,
     password: &str,
-    timeout_secs: u64
-) -> anyhow::Result<()> {
-    info!("Processing {} records in memory", batch.len());
-    
-    // Create JSON array payload from batch items
-    let mut json_payload = String::with_capacity(batch.len() * 200); // Rough estimate for size
+    timeout_secs: u64,
+) -> Result<()> {
+    // Construct JSON payload
+    let mut json_payload = String::with_capacity(batch.len() * 200);
     json_payload.push('[');
-    
-    // Add each record to the JSON array
     for (i, record) in batch.iter().enumerate() {
         if i > 0 {
             json_payload.push_str(",\n");
         }
         json_payload.push_str(record);
     }
-    
     json_payload.push(']');
-    
-    // Convert to bytes for sending
     let payload_bytes = json_payload.into_bytes();
-    let payload_size = payload_bytes.len();
-    info!("📦 In-memory payload size: {} bytes", payload_size);
-    
-    // Send data directly to Doris using Stream Load API
-    // Normalize the Doris host URL - ensure it has the proper format with http:// prefix
+
+    // Normalize Doris host
     let doris_host = if !doris_host.starts_with("http://") && !doris_host.starts_with("https://") {
         format!("http://{}", doris_host.trim_end_matches('/'))
     } else {
         doris_host.trim_end_matches('/').to_string()
     };
-    
     let url = format!("{}/api/{}/{}/_stream_load", doris_host, db, table);
-    info!("🌐 Sending Stream Load to: {}", url);
-
-    // Build HTTP client
-    let client = Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .http1_only()
-        .pool_max_idle_per_host(0)
-        .build()
-        .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))?;
+    let label = format!("kafka_in_memory_{}", Uuid::new_v4());
 
     // Build headers
     let mut headers = HeaderMap::new();
     headers.insert("Expect", HeaderValue::from_static("100-continue"));
+    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     headers.insert("format", HeaderValue::from_static("json"));
     headers.insert("strip_outer_array", HeaderValue::from_static("true"));
-    
-    // Generate a unique label for the Stream Load job
-    let label = format!("kafka_in_memory_{}", Uuid::new_v4());
-    if let Ok(header_value) = HeaderValue::from_str(&label) {
-        headers.insert("label", header_value);
+    headers.insert("label", HeaderValue::from_str(&label).unwrap());
+
+    // Build HTTP client with redirect disabled
+    let client = Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .http1_only()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))?;
+
+    // Function to send the request (allows retry on redirect)
+    async fn send_stream_load_request(
+        client: &Client,
+        url: &str,
+        headers: HeaderMap,
+        user: &str,
+        password: &str,
+        body: Vec<u8>,
+    ) -> Result<reqwest::Response> {
+        client
+            .put(url)
+            .headers(headers)
+            .basic_auth(user, Some(password))
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Stream Load request failed: {}", e))
     }
-    
-    // Add authentication header
-    let mut auth_value = format!("{}:", user);
-    if !password.is_empty() {
-        auth_value = format!("{}:{}", user, password);
+
+    // First attempt
+    let mut response = send_stream_load_request(&client, &url, headers.clone(), user, password, payload_bytes.clone()).await?;
+
+    // Handle redirect manually
+    if response.status().is_redirection() {
+        if let Some(location) = response.headers().get("Location") {
+            let redirected_url = location.to_str().map_err(|e| anyhow!("Invalid redirect URL: {}", e))?;
+            info!("🔁 Redirected to: {}", redirected_url);
+
+            response = send_stream_load_request(&client, redirected_url, headers, user, password, payload_bytes).await?;
+        } else {
+            return Err(anyhow!("Redirected but no Location header provided"));
+        }
     }
-    let auth_header = format!("Basic {}", base64::encode(auth_value));
-    if let Ok(header_value) = HeaderValue::from_str(&auth_header) {
-        headers.insert("Authorization", header_value);
-    } else {
-        println!("Warning: Could not create Authorization header");
-    }
-    
-    // Send request
-    let response = client
-        .put(&url)
-        .headers(headers)
-        .body(payload_bytes)
-        .send()
-        .await
-        .map_err(|e| anyhow!("Stream Load request failed: {}", e))?;
 
     let status = response.status();
     let body = response.text().await?;
