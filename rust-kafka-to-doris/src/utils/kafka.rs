@@ -290,7 +290,7 @@ pub async fn process_in_memory(
             let redirected_url = location.to_str().map_err(|e| anyhow!("Invalid redirect URL: {}", e))?;
             info!("🔁 Redirected to: {}", redirected_url);
 
-            response = send_stream_load_request(&client, redirected_url, headers, user, password, payload_bytes).await?;
+            response = send_stream_load_request(&client, redirected_url, headers.clone(), user, password, payload_bytes).await?;
         } else {
             return Err(anyhow!("Redirected but no Location header provided"));
         }
@@ -302,7 +302,7 @@ pub async fn process_in_memory(
     if !status.is_success() || body.to_lowercase().contains("fail") || body.to_lowercase().contains("error") {
         Err(anyhow!("❌ In-memory Stream Load failed ({}): {}", status, body))
     } else {
-        info!("✅ In-memory Stream Load succeeded with label `{}`: {}", label, body);
+        info!("✅ In-memory Stream Load succeeded with label `{}`: {}, headers: {:?}", label, body, headers.clone());
         Ok(())
     }
 }
