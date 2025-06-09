@@ -222,6 +222,7 @@ pub async fn process_in_memory(
     user: &str,
     password: &str,
     timeout_secs: u64,
+    cloud_cluster: &str,
 ) -> Result<()> {
     // Construct JSON payload
     let mut json_payload = String::with_capacity(batch.len() * 200);
@@ -249,6 +250,7 @@ pub async fn process_in_memory(
     headers.insert("Expect", HeaderValue::from_static("100-continue"));
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     headers.insert("format", HeaderValue::from_static("json"));
+    headers.insert("cloud_cluster", HeaderValue::from_str(cloud_cluster).unwrap());
     headers.insert("strip_outer_array", HeaderValue::from_static("true"));
     headers.insert("label", HeaderValue::from_str(&label).unwrap());
 
@@ -319,7 +321,8 @@ pub async fn create_batch(
     connect_timeout: u64,
     _concurrency: usize, // Keeping parameter but not using it 
     use_mysql: bool,
-    mysql_port: u16
+    mysql_port: u16,
+    cloud_cluster: &str,
 ) -> Result<()> {
     
     let mut batch: Vec<String> = Vec::with_capacity(batch_size);
@@ -375,7 +378,8 @@ pub async fn create_batch(
                     doris_table,
                     doris_user,
                     doris_password,
-                    connect_timeout
+                    connect_timeout,
+                    cloud_cluster
                 ).await
             } else {
                 // Write batch to file

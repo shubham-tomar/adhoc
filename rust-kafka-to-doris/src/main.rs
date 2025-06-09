@@ -61,7 +61,8 @@ async fn main() -> Result<()> {
         args.connect_timeout,
         args.concurrency,
         args.use_mysql,
-        args.mysql_port
+        args.mysql_port,
+        &args.cloud_cluster
     ).await?;
     
     info!("Processing completed successfully");

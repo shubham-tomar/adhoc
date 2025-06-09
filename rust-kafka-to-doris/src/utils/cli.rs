@@ -46,6 +46,10 @@ pub struct Args {
     /// Use MySQL protocol instead of HTTP for Doris connection
     #[arg(long, default_value_t = false)]
     pub use_mysql: bool,
+
+    /// Use Cloud Cluster for Doris connection
+    #[arg(long, default_value = "")]
+    pub cloud_cluster: String,
     
     /// MySQL port for Doris FE node (only used when use_mysql is true)
     #[arg(long, default_value_t = 9030)]
