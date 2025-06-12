@@ -60,6 +60,7 @@ pub fn create_consumer(
     
     // Start building the client configuration
     let mut config = ClientConfig::new();
+    // let mut group_id = group_id.to_string() + "_" + topics[0];
     
     // Set required properties
     config.set("group.id", group_id)

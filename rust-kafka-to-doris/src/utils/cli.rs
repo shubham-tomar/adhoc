@@ -90,6 +90,10 @@ pub struct Args {
     /// Doris password
     #[arg(long, default_value = "")]
     pub doris_password: String,
+
+    /// Path to config file
+    #[arg(long, default_value = "config.json")]
+    pub config_path: String,
 }
 
 // Parse the topics string into a Vec of string slices
