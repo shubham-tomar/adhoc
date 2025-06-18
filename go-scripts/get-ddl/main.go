@@ -221,10 +221,10 @@ func RemoveExistingPartitionClause(ddl string) string {
 func main() {
 	// Configuration
 	config := Config{
-		Host:     "10.31.50.240",
+		Host:     "",
 		Port:     "9030",  // Default Doris FE port
-		User:     "admin",
-		Password: "A4nK6YQFATTu8zk",
+		User:     "",
+		Password: "",
 		Database: "",
 	}
 	
