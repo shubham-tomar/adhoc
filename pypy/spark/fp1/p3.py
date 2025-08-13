@@ -7,7 +7,7 @@ from argparse import ArgumentParser
 
 def parse_args():
     parser = ArgumentParser()
-    parser.add_argument("--counter", type=int, default=1)
+    # parser.add_argument("--input", required=True, type=str)
     return parser.parse_args()
 
 args = parse_args()
@@ -65,15 +65,17 @@ result_good.explain("formatted")
 
 # Option 3: Pre-partition data to avoid shuffles
 orders_partitioned = orders.repartition("country")
-orders_partitioned.write.partitionBy("country").parquet("/tmp/orders_by_country")
+orders_partitioned.write.partitionBy("country").mode("overwrite").parquet("/tmp/orders_by_country")
 
 # Future operations on same partition key don't shuffle
 df = spark.read.parquet("/tmp/orders_by_country")
-result = df.groupBy("country").agg(sum("amount"))  # No shuffle if reading partitioned data
+result = df.groupBy("country").agg(F.sum("amount"))  # No shuffle if reading partitioned data
 
 result.write.format("parquet") \
     .option("header", "true") \
-    .mode("append") \
+    .mode("overwrite") \
     .save("/tmp/result")
+
+# spark.stop()
 
 input("Press any key to exit...")
