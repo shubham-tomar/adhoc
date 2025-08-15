@@ -16,7 +16,10 @@ def main():
     spark = SparkSession.builder \
         .appName("p4") \
         .master("local[2]") \
+        .config("spark.sql.streaming.stateStore.providerClass", "org.apache.spark.sql.execution.streaming.state.RocksDBStateStoreProvider") \
         .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0") \
+        .config("spark.sql.streaming.stateStore.backend", "rocksdb") \
+        .config("spark.sql.streaming.kafka.maxOffsetsPerTrigger", "10000") \
         .getOrCreate()
     
     consumer = spark.readStream \
@@ -26,9 +29,26 @@ def main():
         .option("startingOffsets", "earliest") \
         .load()
     
-    query = consumer.writeStream \
+    # |{"active":false,"clicks":712,"created_at":1755097410,"id":"iRA420Sh3y","name":"eVVfohljYs","status":"SUCCESS"}
+    schema = StructType([
+        StructField("active", BooleanType()),
+        StructField("clicks", IntegerType()),
+        StructField("created_at", IntegerType()),
+        StructField("id", StringType()),
+        StructField("name", StringType()),
+        StructField("status", StringType())
+    ])
+    
+    # parsed = consumer.selectExpr("CAST(value AS STRING)")
+    parsed = consumer.select(
+        F.from_json(F.col("value").cast("string"), schema).alias("data")
+    ).select("data.*")
+    parsed.printSchema()
+    
+    query = parsed.writeStream \
         .format("console") \
         .outputMode("append") \
+        .option("truncate", "false") \
         .trigger(processingTime="10 seconds") \
         .option("checkpointLocation", "/tmp/checkpoint") \
         .start()
