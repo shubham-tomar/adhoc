@@ -37,7 +37,6 @@ def main():
         .getOrCreate()
     
     df = create_sample_data(spark)
-    df.show()
 # basic transformations 
     df_f = df.select("txn_id", "amount", "category", "payment_method") \
         .filter(F.col("amount") > 100) \
@@ -47,9 +46,28 @@ def main():
             .otherwise("Medium")) \
         .sort(F.col("amount").desc())
     
-    df_f.explain("formatted")
-    
-    df_f.show()
+# Narrow Transformation
+    df_with_array = df.withColumn("tags", F.split(F.col("category"), ""))
+    df_with_array.show()
+    df_exploded = df_with_array.withColumn("tag", F.explode("tags")) \
+        .filter(F.col("tag") != " ")
+    df_exploded.show()
+    print(f"After flatMap/explode: {df_exploded.rdd.getNumPartitions()} partitions")
+
+# Wide Transformation
+    df_cust = df.select("cust_id").distinct()
+    df_j_cust = df.join(df_cust, df.cust_id == df_cust.cust_id, "inner")
+    df_j_cust.show()
+    print(f"After join: {df_j_cust.rdd.getNumPartitions()} partitions")
+    # df_j_cust.explain(True)
+
+    df_g_cat = df.groupBy("category") \
+        .agg(F.round(F.sum("amount"), 2).alias("total_amount"),
+        # F.collect_list("cust_id").alias("customers"),
+        F.count("txn_id").alias("txn_count")
+        )
+    df_g_cat.show()
+    df_g_cat.explain(True)
     
     spark.stop()
 
