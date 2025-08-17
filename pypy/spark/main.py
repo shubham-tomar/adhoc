@@ -10,7 +10,7 @@ def tick_tock(func):
         tick = time.time()
         result = func(*args, **kwargs)
         tock = time.time()
-        print(f"Time taken by {func.__name__}: {tock - tick}")
+        print(f"Time taken by {func.__name__}: {round(tock - tick, 2)}")
         return result
     return wrapper
 
@@ -38,9 +38,16 @@ def main():
     
     df = create_sample_data(spark)
     df.show()
-
+# basic transformations 
     df_f = df.select("txn_id", "amount", "category", "payment_method") \
-        .filter(F.col("amount") > 100)
+        .filter(F.col("amount") > 100) \
+        .withColumn("amount_category",
+        F.when(F.col("amount") > 5000, "High") \
+            .when(F.col("amount") < 2000, "Low") \
+            .otherwise("Medium")) \
+        .sort(F.col("amount").desc())
+    
+    df_f.explain("formatted")
     
     df_f.show()
     
