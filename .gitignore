@@ -126,3 +126,4 @@ Jenkinsfile
 # adhoc
 .venv
 
+*.csv
