@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
+from pyspark.sql.window import Window
 
 def tick_tock(func):
     def wrapper(*args, **kwargs):
@@ -50,7 +51,8 @@ def main():
     df_with_array = df.withColumn("tags", F.split(F.col("category"), ""))
     df_with_array.show()
     df_exploded = df_with_array.withColumn("tag", F.explode("tags")) \
-        .filter(F.col("tag") != " ")
+        .filter(F.col("tag") != " ") \
+        .filter(F.col("tag").isNotNull())
     # df_exploded.show()
     print(f"After flatMap/explode: {df_exploded.rdd.getNumPartitions()} partitions")
 
@@ -76,7 +78,6 @@ def main():
 # 5. Most frequent payment method
 
     # Option 1: Using collect_list and custom function with UDF
-    from pyspark.sql.types import StringType
     
     def find_most_frequent(values_list):
         if not values_list:
@@ -113,7 +114,54 @@ def main():
         .orderBy("year_month")
     df3_2.show()
 
+# TODO: For each customer, calculate:
+# 1. Running total of spending over time
+# 2. Rank of each transaction by amount (within customer)
+# 3. Difference from previous transaction amount
+# 4. Average of last 3 transactions (moving average)
 
+    cust_time_window = Window.partitionBy("cust_id").orderBy("txn_date")
+    cust_amount_window = Window.partitionBy("cust_id").orderBy(F.col("amount").desc())
+    cust_last3_window = Window.partitionBy("cust_id").orderBy("txn_date").rowsBetween(-2, 0)
+
+    df4 = df.withColumn("running_total", F.round(F.sum("amount").over(cust_time_window), 2)) \
+        .withColumn("rank_amt", F.dense_rank().over(cust_amount_window)) \
+        .withColumn("amt_diff", (F.round(F.col("amount") - F.lag(F.col("amount"), 1).over(cust_time_window), 2))) \
+        .withColumn("last3_avg", F.round(F.avg("amount").over(cust_last3_window), 2)) \
+        .orderBy("cust_id", "txn_date")
+    df4.show()
+
+# TODO: Find the top 3 transactions for each category
+    cat_window = Window.partitionBy("category").orderBy(F.col("amount").desc())
+    df4_1 = df.withColumn("rank_amt", F.dense_rank().over(cat_window)) \
+        .filter(F.col("rank_amt") <= 3)
+    df4_1.show()
+
+    category_counts = df.groupBy("category").count().orderBy("count")
+    category_counts.show()
+
+    tick = time.time_ns()
+    df5 = df.repartitionByRange(16, F.col("txn_id"))
+    tock = time.time_ns()
+    print(f"Time taken to repartition: {round((tock - tick) / 1e9, 2)}")
+    partition_sizes = df5.rdd.glom().map(len).collect()
+    print(partition_sizes)
+    skew_ratio = max(partition_sizes) / (sum(partition_sizes) / len(partition_sizes))
+    print(f"Skew ratio: {skew_ratio:.2f}x (>2 indicates skew)")
+
+    tick = time.time_ns()
+    df_c = df5.coalesce(5)
+    tock = time.time_ns()
+    partition_sizes = df_c.rdd.glom().map(len).collect()
+    print(partition_sizes)
+    print(f"Time taken to coalesce: {round((tock - tick) / 1e9, 2)}")
+
+# Salting
+    salt_bucket = 10
+    df6 = df.withColumn("salt", (F.rand() * salt_bucket).cast("int")) \
+        .withColumn("salted_key", F.concat(F.col("cust_id"), F.lit("_"), F.col("salt")))
+    
+    dfsalt = df6.groupBy("salted_key").count().orderBy("count")
 
 
 
