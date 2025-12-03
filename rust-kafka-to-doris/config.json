@@ -1,12 +1,8 @@
 {
     "jobs": [
       {
-        "topic": "src_1",
-        "table": "users_1"
-      },
-      {
-        "topic": "src_2",
-        "table": "users_2"
+        "topic": "QA_KAFKA_INSIGHTS_LOAD_TOPIC",
+        "table": "insights_v2_dummy"
       }
     ]
 }
