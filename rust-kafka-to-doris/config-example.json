@@ -1,0 +1,12 @@
+{
+    "jobs": [
+      {
+        "topic": "src_1",
+        "table": "users_1"
+      },
+      {
+        "topic": "src_2",
+        "table": "users_2"
+      }
+    ]
+}
