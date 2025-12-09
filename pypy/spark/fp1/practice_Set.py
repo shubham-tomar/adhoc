@@ -5,12 +5,15 @@
 # First, let's create sample datasets that we'll use throughout the exercises:
 
 
+import random
+from datetime import datetime, timedelta
+
+builtin_round = round
+
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql.functions import *
 from pyspark.sql.window import Window
-import random
-from datetime import datetime, timedelta
 
 spark = SparkSession.builder \
     .appName("PySpark Practice") \
@@ -27,7 +30,7 @@ def create_sample_data():
             "transaction_id": f"TXN{i:05d}",
             "customer_id": f"CUST{random.randint(1, 1000):04d}",
             "product_id": f"PROD{random.randint(1, 100):03d}",
-            "amount": round(random.uniform(10, 1000), 2),
+            "amount": builtin_round(random.uniform(10, 1000), 2),
             "quantity": random.randint(1, 5),
             "transaction_date": (datetime.now() - timedelta(days=random.randint(0, 365))).strftime("%Y-%m-%d"),
             "category": random.choice(["Electronics", "Clothing", "Books", "Home", "Sports"]),

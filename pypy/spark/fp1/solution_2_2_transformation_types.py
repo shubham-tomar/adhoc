@@ -204,6 +204,7 @@ print(f"Customers partitions: {customers_df.rdd.getNumPartitions()}")
 
 start = time.time()
 df_joined = df.join(customers_df, "customer_id", "inner")
+# df_joined = df.join(broadcast(customers_df), "customer_id", "inner")
 result_count = df_joined.count()
 elapsed = time.time() - start
 
